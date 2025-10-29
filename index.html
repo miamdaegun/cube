@@ -20,6 +20,10 @@
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             overflow: hidden;
             perspective: 1000px;
+            user-select: none;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
         }
 
         .container {
@@ -28,7 +32,6 @@
             position: relative;
             transform-style: preserve-3d;
             cursor: grab;
-            transition: transform 0.1s ease-out;
         }
 
         .container:active {
@@ -40,64 +43,39 @@
             height: 100%;
             position: relative;
             transform-style: preserve-3d;
-            animation: idle-rotate 20s linear infinite;
-        }
-
-        .container.dragging .cube {
-            animation: none;
         }
 
         .face {
             position: absolute;
             width: 200px;
             height: 200px;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            font-size: 48px;
-            font-weight: bold;
-            color: white;
-            border: 2px solid rgba(255, 255, 255, 0.3);
-            box-shadow: inset 0 0 60px rgba(0, 0, 0, 0.2);
+            background: rgba(100, 100, 100, 0.8);
+            border: 2px solid rgba(80, 80, 80, 0.5);
+            box-shadow: inset 0 0 60px rgba(0, 0, 0, 0.3);
         }
 
         .front {
-            background: rgba(255, 99, 71, 0.9);
             transform: rotateY(0deg) translateZ(100px);
         }
 
         .back {
-            background: rgba(135, 206, 250, 0.9);
             transform: rotateY(180deg) translateZ(100px);
         }
 
         .right {
-            background: rgba(144, 238, 144, 0.9);
             transform: rotateY(90deg) translateZ(100px);
         }
 
         .left {
-            background: rgba(255, 215, 0, 0.9);
             transform: rotateY(-90deg) translateZ(100px);
         }
 
         .top {
-            background: rgba(221, 160, 221, 0.9);
             transform: rotateX(90deg) translateZ(100px);
         }
 
         .bottom {
-            background: rgba(255, 165, 0, 0.9);
             transform: rotateX(-90deg) translateZ(100px);
-        }
-
-        @keyframes idle-rotate {
-            from {
-                transform: rotateX(0deg) rotateY(0deg);
-            }
-            to {
-                transform: rotateX(360deg) rotateY(360deg);
-            }
         }
 
         .instructions {
@@ -121,12 +99,12 @@
 
     <div class="container" id="container">
         <div class="cube" id="cube">
-            <div class="face front">앞</div>
-            <div class="face back">뒤</div>
-            <div class="face right">오른쪽</div>
-            <div class="face left">왼쪽</div>
-            <div class="face top">위</div>
-            <div class="face bottom">아래</div>
+            <div class="face front"></div>
+            <div class="face back"></div>
+            <div class="face right"></div>
+            <div class="face left"></div>
+            <div class="face top"></div>
+            <div class="face bottom"></div>
         </div>
     </div>
 
@@ -135,109 +113,301 @@
         const cube = document.getElementById('cube');
         
         let isDragging = false;
-        let previousMouseX = 0;
-        let previousMouseY = 0;
-        let rotationX = 0;
-        let rotationY = 0;
-        let velocityX = 0;
-        let velocityY = 0;
+        let lastMouseX = 0;
+        let lastMouseY = 0;
+        
+        // 쿼터니언으로 회전 상태 저장
+        let rotation = { w: 1, x: 0, y: 0, z: 0 };
+        let velocity = { w: 1, x: 0, y: 0, z: 0 };
+        let velocityResetTimer = null;
+
+        // 쿼터니언 곱셈
+        function multiplyQuaternions(q1, q2) {
+            return {
+                w: q1.w * q2.w - q1.x * q2.x - q1.y * q2.y - q1.z * q2.z,
+                x: q1.w * q2.x + q1.x * q2.w + q1.y * q2.z - q1.z * q2.y,
+                y: q1.w * q2.y - q1.x * q2.z + q1.y * q2.w + q1.z * q2.x,
+                z: q1.w * q2.z + q1.x * q2.y - q1.y * q2.x + q1.z * q2.w
+            };
+        }
+
+        // 쿼터니언 정규화
+        function normalizeQuaternion(q) {
+            const len = Math.sqrt(q.w * q.w + q.x * q.x + q.y * q.y + q.z * q.z);
+            if (len === 0) return { w: 1, x: 0, y: 0, z: 0 };
+            return {
+                w: q.w / len,
+                x: q.x / len,
+                y: q.y / len,
+                z: q.z / len
+            };
+        }
+
+        // 쿼터니언을 회전 행렬로 변환
+        function quaternionToMatrix(q) {
+            const { w, x, y, z } = q;
+            
+            const xx = x * x, yy = y * y, zz = z * z;
+            const xy = x * y, xz = x * z, yz = y * z;
+            const wx = w * x, wy = w * y, wz = w * z;
+            
+            return `matrix3d(
+                ${1 - 2 * (yy + zz)}, ${2 * (xy + wz)}, ${2 * (xz - wy)}, 0,
+                ${2 * (xy - wz)}, ${1 - 2 * (xx + zz)}, ${2 * (yz + wx)}, 0,
+                ${2 * (xz + wy)}, ${2 * (yz - wx)}, ${1 - 2 * (xx + yy)}, 0,
+                0, 0, 0, 1
+            )`;
+        }
+
+        // 마우스 위치를 arcball 구 위의 3D 점으로 변환
+        function getArcballVector(x, y) {
+            const rect = container.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const centerY = rect.top + rect.height / 2;
+            const radius = Math.min(rect.width, rect.height) / 2;
+
+            // 정규화된 좌표 - 영역 제한 없음
+            const px = (x - centerX) / radius;
+            const py = (centerY - y) / radius; // Y축 반전
+
+            const lengthSquared = px * px + py * py;
+
+            if (lengthSquared <= 1) {
+                // 구 표면 위의 점
+                return {
+                    x: px,
+                    y: py,
+                    z: Math.sqrt(1 - lengthSquared)
+                };
+            } else {
+                // 구 바깥 - 평면에 투영 (무제한)
+                const length = Math.sqrt(lengthSquared);
+                return {
+                    x: px / length,
+                    y: py / length,
+                    z: 0
+                };
+            }
+        }
+
+        // 두 벡터로부터 회전 쿼터니언 생성 (최대 회전 속도 제한 추가)
+        function getRotationQuaternion(v1, v2) {
+            // 외적으로 회전 축 계산
+            const axis = {
+                x: v1.y * v2.z - v1.z * v2.y,
+                y: v1.z * v2.x - v1.x * v2.z,
+                z: v1.x * v2.y - v1.y * v2.x
+            };
+
+            // 내적으로 회전 각도 계산
+            const dot = v1.x * v2.x + v1.y * v2.y + v1.z * v2.z;
+            
+            // 최대 회전 각도 제한 (라디안) - 0.025로 감소
+            const maxAngle = 0.025; // 약 1.4도
+            const angle = Math.acos(Math.max(-1, Math.min(1, dot)));
+            const clampedAngle = Math.min(angle, maxAngle);
+            
+            // 제한된 각도로 쿼터니언 생성
+            const halfAngle = clampedAngle / 2;
+            const axisLength = Math.sqrt(axis.x * axis.x + axis.y * axis.y + axis.z * axis.z);
+            
+            if (axisLength < 0.0001) {
+                return { w: 1, x: 0, y: 0, z: 0 };
+            }
+            
+            const sinHalfAngle = Math.sin(halfAngle);
+            return normalizeQuaternion({
+                w: Math.cos(halfAngle),
+                x: (axis.x / axisLength) * sinHalfAngle,
+                y: (axis.y / axisLength) * sinHalfAngle,
+                z: (axis.z / axisLength) * sinHalfAngle
+            });
+        }
+
+        // 기본 드래그 동작 방지
+        container.addEventListener('dragstart', (e) => {
+            e.preventDefault();
+        });
 
         container.addEventListener('mousedown', (e) => {
+            e.preventDefault();
             isDragging = true;
-            container.classList.add('dragging');
-            previousMouseX = e.clientX;
-            previousMouseY = e.clientY;
-            velocityX = 0;
-            velocityY = 0;
+            lastMouseX = e.clientX;
+            lastMouseY = e.clientY;
+            velocity = { w: 1, x: 0, y: 0, z: 0 };
+            
+            if (velocityResetTimer) {
+                clearTimeout(velocityResetTimer);
+            }
         });
 
         document.addEventListener('mousemove', (e) => {
             if (!isDragging) return;
 
-            const deltaX = e.clientX - previousMouseX;
-            const deltaY = e.clientY - previousMouseY;
+            const currentMouseX = e.clientX;
+            const currentMouseY = e.clientY;
 
-            // 드래그 방향과 회전 방향 일치 (Y축 반전 제거)
-            velocityX = -deltaY * 1.2;  // 위로 드래그 시 위로 회전
-            velocityY = deltaX * 1.2;   // 오른쪽 드래그 시 오른쪽으로 회전
+            // 이전 및 현재 마우스 위치를 arcball 벡터로 변환
+            const v1 = getArcballVector(lastMouseX, lastMouseY);
+            const v2 = getArcballVector(currentMouseX, currentMouseY);
 
-            rotationX += velocityX;
-            rotationY += velocityY;
+            // 회전 쿼터니언 계산
+            const deltaRotation = getRotationQuaternion(v1, v2);
+            
+            // 현재 회전에 적용
+            rotation = multiplyQuaternions(deltaRotation, rotation);
+            rotation = normalizeQuaternion(rotation);
 
-            cube.style.transform = `rotateX(${rotationX}deg) rotateY(${rotationY}deg)`;
+            // 속도 누적 - 더 천천히 누적되도록 감소
+            const dampedDelta = {
+                w: deltaRotation.w + (1 - deltaRotation.w) * 0.7,  // 회전량 30%만 적용
+                x: deltaRotation.x * 0.3,
+                y: deltaRotation.y * 0.3,
+                z: deltaRotation.z * 0.3
+            };
+            velocity = multiplyQuaternions(normalizeQuaternion(dampedDelta), velocity);
+            velocity = normalizeQuaternion(velocity);
 
-            previousMouseX = e.clientX;
-            previousMouseY = e.clientY;
+            cube.style.transform = quaternionToMatrix(rotation);
+
+            lastMouseX = currentMouseX;
+            lastMouseY = currentMouseY;
+
+            if (velocityResetTimer) {
+                clearTimeout(velocityResetTimer);
+            }
+
+            velocityResetTimer = setTimeout(() => {
+                if (isDragging) {
+                    velocity = { w: 1, x: 0, y: 0, z: 0 };
+                }
+            }, 100);
         });
 
         document.addEventListener('mouseup', () => {
             if (!isDragging) return;
             
             isDragging = false;
-            container.classList.remove('dragging');
 
-            // 관성 효과 - 더 오래 회전하도록 마찰력 감소
-            const friction = 0.98;  // 0.95에서 0.98로 증가
+            if (velocityResetTimer) {
+                clearTimeout(velocityResetTimer);
+                velocityResetTimer = null;
+            }
+
+            // 관성 효과
+            let currentVelocity = { ...velocity };
+            
             const animate = () => {
-                if (Math.abs(velocityX) > 0.05 || Math.abs(velocityY) > 0.05) {
-                    velocityX *= friction;
-                    velocityY *= friction;
-                    rotationX += velocityX;
-                    rotationY += velocityY;
-                    cube.style.transform = `rotateX(${rotationX}deg) rotateY(${rotationY}deg)`;
+                // 쿼터니언의 각도 성분 계산
+                const angle = 2 * Math.acos(Math.max(-1, Math.min(1, currentVelocity.w)));
+                
+                if (angle > 0.001) {
+                    rotation = multiplyQuaternions(currentVelocity, rotation);
+                    rotation = normalizeQuaternion(rotation);
+                    cube.style.transform = quaternionToMatrix(rotation);
+                    
+                    // 속도 감쇠 - 회전 각도를 줄임
+                    const decay = 0.97;
+                    const halfAngle = angle * decay / 2;
+                    const sinHalfAngle = Math.sin(halfAngle);
+                    const axisLength = Math.sqrt(currentVelocity.x * currentVelocity.x + 
+                                                  currentVelocity.y * currentVelocity.y + 
+                                                  currentVelocity.z * currentVelocity.z);
+                    
+                    if (axisLength > 0.0001) {
+                        currentVelocity = {
+                            w: Math.cos(halfAngle),
+                            x: (currentVelocity.x / axisLength) * sinHalfAngle,
+                            y: (currentVelocity.y / axisLength) * sinHalfAngle,
+                            z: (currentVelocity.z / axisLength) * sinHalfAngle
+                        };
+                    } else {
+                        currentVelocity = { w: 1, x: 0, y: 0, z: 0 };
+                    }
+                    
                     requestAnimationFrame(animate);
                 }
             };
+            
             animate();
         });
 
-        // 터치 이벤트 지원 (모바일)
+        // 터치 이벤트 지원
         container.addEventListener('touchstart', (e) => {
             isDragging = true;
-            container.classList.add('dragging');
-            previousMouseX = e.touches[0].clientX;
-            previousMouseY = e.touches[0].clientY;
-            velocityX = 0;
-            velocityY = 0;
+            lastMouseX = e.touches[0].clientX;
+            lastMouseY = e.touches[0].clientY;
+            velocity = { w: 1, x: 0, y: 0, z: 0 };
         });
 
         document.addEventListener('touchmove', (e) => {
             if (!isDragging) return;
             e.preventDefault();
 
-            const deltaX = e.touches[0].clientX - previousMouseX;
-            const deltaY = e.touches[0].clientY - previousMouseY;
+            const currentMouseX = e.touches[0].clientX;
+            const currentMouseY = e.touches[0].clientY;
 
-            // 드래그 방향과 회전 방향 일치
-            velocityX = -deltaY * 1.2;
-            velocityY = deltaX * 1.2;
+            const v1 = getArcballVector(lastMouseX, lastMouseY);
+            const v2 = getArcballVector(currentMouseX, currentMouseY);
 
-            rotationX += velocityX;
-            rotationY += velocityY;
+            const deltaRotation = getRotationQuaternion(v1, v2);
+            
+            rotation = multiplyQuaternions(deltaRotation, rotation);
+            rotation = normalizeQuaternion(rotation);
 
-            cube.style.transform = `rotateX(${rotationX}deg) rotateY(${rotationY}deg)`;
+            // 속도 누적 - 감소된 속도
+            const dampedDelta = {
+                w: deltaRotation.w + (1 - deltaRotation.w) * 0.7,
+                x: deltaRotation.x * 0.3,
+                y: deltaRotation.y * 0.3,
+                z: deltaRotation.z * 0.3
+            };
+            velocity = multiplyQuaternions(normalizeQuaternion(dampedDelta), velocity);
+            velocity = normalizeQuaternion(velocity);
 
-            previousMouseX = e.touches[0].clientX;
-            previousMouseY = e.touches[0].clientY;
+            cube.style.transform = quaternionToMatrix(rotation);
+
+            lastMouseX = currentMouseX;
+            lastMouseY = currentMouseY;
         });
 
         document.addEventListener('touchend', () => {
             if (!isDragging) return;
             
             isDragging = false;
-            container.classList.remove('dragging');
 
-            const friction = 0.98;
+            let currentVelocity = { ...velocity };
+            
             const animate = () => {
-                if (Math.abs(velocityX) > 0.05 || Math.abs(velocityY) > 0.05) {
-                    velocityX *= friction;
-                    velocityY *= friction;
-                    rotationX += velocityX;
-                    rotationY += velocityY;
-                    cube.style.transform = `rotateX(${rotationX}deg) rotateY(${rotationY}deg)`;
+                const angle = 2 * Math.acos(Math.max(-1, Math.min(1, currentVelocity.w)));
+                
+                if (angle > 0.001) {
+                    rotation = multiplyQuaternions(currentVelocity, rotation);
+                    rotation = normalizeQuaternion(rotation);
+                    cube.style.transform = quaternionToMatrix(rotation);
+                    
+                    const decay = 0.97;
+                    const halfAngle = angle * decay / 2;
+                    const sinHalfAngle = Math.sin(halfAngle);
+                    const axisLength = Math.sqrt(currentVelocity.x * currentVelocity.x + 
+                                                  currentVelocity.y * currentVelocity.y + 
+                                                  currentVelocity.z * currentVelocity.z);
+                    
+                    if (axisLength > 0.0001) {
+                        currentVelocity = {
+                            w: Math.cos(halfAngle),
+                            x: (currentVelocity.x / axisLength) * sinHalfAngle,
+                            y: (currentVelocity.y / axisLength) * sinHalfAngle,
+                            z: (currentVelocity.z / axisLength) * sinHalfAngle
+                        };
+                    } else {
+                        currentVelocity = { w: 1, x: 0, y: 0, z: 0 };
+                    }
+                    
                     requestAnimationFrame(animate);
                 }
             };
+            
             animate();
         });
     </script>
