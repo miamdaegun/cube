@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D 회전 정육면체</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            overflow: hidden;
+            perspective: 1000px;
+        }
+
+        .container {
+            width: 200px;
+            height: 200px;
+            position: relative;
+            transform-style: preserve-3d;
+            cursor: grab;
+            transition: transform 0.1s ease-out;
+        }
+
+        .container:active {
+            cursor: grabbing;
+        }
+
+        .cube {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            transform-style: preserve-3d;
+            animation: idle-rotate 20s linear infinite;
+        }
+
+        .container.dragging .cube {
+            animation: none;
+        }
+
+        .face {
+            position: absolute;
+            width: 200px;
+            height: 200px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-size: 48px;
+            font-weight: bold;
+            color: white;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            box-shadow: inset 0 0 60px rgba(0, 0, 0, 0.2);
+        }
+
+        .front {
+            background: rgba(255, 99, 71, 0.9);
+            transform: rotateY(0deg) translateZ(100px);
+        }
+
+        .back {
+            background: rgba(135, 206, 250, 0.9);
+            transform: rotateY(180deg) translateZ(100px);
+        }
+
+        .right {
+            background: rgba(144, 238, 144, 0.9);
+            transform: rotateY(90deg) translateZ(100px);
+        }
+
+        .left {
+            background: rgba(255, 215, 0, 0.9);
+            transform: rotateY(-90deg) translateZ(100px);
+        }
+
+        .top {
+            background: rgba(221, 160, 221, 0.9);
+            transform: rotateX(90deg) translateZ(100px);
+        }
+
+        .bottom {
+            background: rgba(255, 165, 0, 0.9);
+            transform: rotateX(-90deg) translateZ(100px);
+        }
+
+        @keyframes idle-rotate {
+            from {
+                transform: rotateX(0deg) rotateY(0deg);
+            }
+            to {
+                transform: rotateX(360deg) rotateY(360deg);
+            }
+        }
+
+        .instructions {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255, 255, 255, 0.9);
+            padding: 15px 30px;
+            border-radius: 10px;
+            font-family: 'Arial', sans-serif;
+            color: #333;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+</head>
+<body>
+    <div class="instructions">
+        🖱️ 정육면체를 드래그하여 회전시켜보세요!
+    </div>
+
+    <div class="container" id="container">
+        <div class="cube" id="cube">
+            <div class="face front">앞</div>
+            <div class="face back">뒤</div>
+            <div class="face right">오른쪽</div>
+            <div class="face left">왼쪽</div>
+            <div class="face top">위</div>
+            <div class="face bottom">아래</div>
+        </div>
+    </div>
+
+    <script>
+        const container = document.getElementById('container');
+        const cube = document.getElementById('cube');
+        
+        let isDragging = false;
+        let previousMouseX = 0;
+        let previousMouseY = 0;
+        let rotationX = 0;
+        let rotationY = 0;
+        let velocityX = 0;
+        let velocityY = 0;
+
+        container.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            container.classList.add('dragging');
+            previousMouseX = e.clientX;
+            previousMouseY = e.clientY;
+            velocityX = 0;
+            velocityY = 0;
+        });
+
+        document.addEventListener('mousemove', (e) => {
+            if (!isDragging) return;
+
+            const deltaX = e.clientX - previousMouseX;
+            const deltaY = e.clientY - previousMouseY;
+
+            // 드래그 방향과 회전 방향 일치 (Y축 반전 제거)
+            velocityX = -deltaY * 1.2;  // 위로 드래그 시 위로 회전
+            velocityY = deltaX * 1.2;   // 오른쪽 드래그 시 오른쪽으로 회전
+
+            rotationX += velocityX;
+            rotationY += velocityY;
+
+            cube.style.transform = `rotateX(${rotationX}deg) rotateY(${rotationY}deg)`;
+
+            previousMouseX = e.clientX;
+            previousMouseY = e.clientY;
+        });
+
+        document.addEventListener('mouseup', () => {
+            if (!isDragging) return;
+            
+            isDragging = false;
+            container.classList.remove('dragging');
+
+            // 관성 효과 - 더 오래 회전하도록 마찰력 감소
+            const friction = 0.98;  // 0.95에서 0.98로 증가
+            const animate = () => {
+                if (Math.abs(velocityX) > 0.05 || Math.abs(velocityY) > 0.05) {
+                    velocityX *= friction;
+                    velocityY *= friction;
+                    rotationX += velocityX;
+                    rotationY += velocityY;
+                    cube.style.transform = `rotateX(${rotationX}deg) rotateY(${rotationY}deg)`;
+                    requestAnimationFrame(animate);
+                }
+            };
+            animate();
+        });
+
+        // 터치 이벤트 지원 (모바일)
+        container.addEventListener('touchstart', (e) => {
+            isDragging = true;
+            container.classList.add('dragging');
+            previousMouseX = e.touches[0].clientX;
+            previousMouseY = e.touches[0].clientY;
+            velocityX = 0;
+            velocityY = 0;
+        });
+
+        document.addEventListener('touchmove', (e) => {
+            if (!isDragging) return;
+            e.preventDefault();
+
+            const deltaX = e.touches[0].clientX - previousMouseX;
+            const deltaY = e.touches[0].clientY - previousMouseY;
+
+            // 드래그 방향과 회전 방향 일치
+            velocityX = -deltaY * 1.2;
+            velocityY = deltaX * 1.2;
+
+            rotationX += velocityX;
+            rotationY += velocityY;
+
+            cube.style.transform = `rotateX(${rotationX}deg) rotateY(${rotationY}deg)`;
+
+            previousMouseX = e.touches[0].clientX;
+            previousMouseY = e.touches[0].clientY;
+        });
+
+        document.addEventListener('touchend', () => {
+            if (!isDragging) return;
+            
+            isDragging = false;
+            container.classList.remove('dragging');
+
+            const friction = 0.98;
+            const animate = () => {
+                if (Math.abs(velocityX) > 0.05 || Math.abs(velocityY) > 0.05) {
+                    velocityX *= friction;
+                    velocityY *= friction;
+                    rotationX += velocityX;
+                    rotationY += velocityY;
+                    cube.style.transform = `rotateX(${rotationX}deg) rotateY(${rotationY}deg)`;
+                    requestAnimationFrame(animate);
+                }
+            };
+            animate();
+        });
+    </script>
+</body>
+</html>
